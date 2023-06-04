@@ -40,8 +40,8 @@ const (
 )
 
 const delay = 8 * time.Millisecond
-const pixel_buf_size = 5
 const neopixel_pin = 6
+const button_pin = 24
 
 func NewRotary() (*Rotary, error) {
 	bus, err := i2c.NewI2C(0x36, 1)
@@ -91,8 +91,6 @@ func (r *Rotary) Position() (int, error) {
 func (r *Rotary) SetPosition(newPos int) error {
 	return nil
 }
-
-const button_pin = 24
 
 func (r *Rotary) Button() (bool, error) {
 	buf := make([]byte, 4)
