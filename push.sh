@@ -24,5 +24,4 @@ GOOS=linux GOARCH=arm go build -o blinds main.go
 
 # Don't forget to set up public key logins
 
-scp blinds pi@blinds:
-
+scp blinds "${target}"

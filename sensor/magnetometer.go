@@ -96,10 +96,18 @@ var writeRegs = i2cdev.Registers{
 	i2cdev.Field{3, 0, 0b00011111},
 }
 
-func NewMagnetometer() (*Magnetometer, error) {
+const defaultAddr = 0x5e
+
+func Default() i2cdev.Conf {
+	return i2cdev.Conf{
+		Addr: defaultAddr,
+	}
+}
+
+func NewMagnetometer(conf i2cdev.Conf) (*Magnetometer, error) {
 	fmt.Printf("creating magnetometer\n")
 
-	bus, err := i2c.NewI2C(0x5e, 1)
+	bus, err := i2c.NewI2C(conf.Addr, conf.Bus)
 	if err != nil {
 		return nil, err
 	}

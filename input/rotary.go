@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/aliher1911/blinds/i2c"
+
 	"github.com/aliher1911/go-i2c"
 )
 
 type Rotary struct {
 	bus *i2c.I2C
+	c   Conf
 }
 
 const (
@@ -40,21 +43,39 @@ const (
 )
 
 const delay = 8 * time.Millisecond
-const neopixel_pin = 6
-const button_pin = 24
+const neopixelPin = 6
+const buttonPin = 24
+const defaultAddr = 0x36
 
-func NewRotary() (*Rotary, error) {
-	bus, err := i2c.NewI2C(0x36, 1)
+type Conf struct {
+	i2cdev.Conf
+	NeopixelPin int
+	ButtonPin   int
+}
+
+func Default() Conf {
+	return Conf{
+		Conf: i2cdev.Conf{
+			Addr: defaultAddr,
+		},
+		NeopixelPin: neopixelPin,
+		ButtonPin:   buttonPin,
+	}
+}
+
+func NewRotary(c Conf) (*Rotary, error) {
+	bus, err := i2c.NewI2C(c.Addr, 1)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &Rotary{
 		bus: bus,
+		c:   c,
 	}
 
 	// Setup button pin to INPUT_PULLUP
-	mask := uint32(1) << button_pin
+	mask := uint32(1) << uint32(c.ButtonPin)
 	cmd := make([]byte, 4)
 	binary.BigEndian.PutUint32(cmd, mask)
 	if err := s.write(GPIO_BASE, GPIO_DIRCLR_BULK, cmd); err != nil {
@@ -68,13 +89,15 @@ func NewRotary() (*Rotary, error) {
 	}
 
 	// Setup neopixel
-	if err := s.write(NEOPIXEL_BASE, NEOPIXEL_PIN, []byte{neopixel_pin}); err != nil {
+	fmt.Printf("setting neopixel pin to %d\n", c.NeopixelPin)
+	if err := s.write(NEOPIXEL_BASE, NEOPIXEL_PIN, []byte{byte(c.NeopixelPin)}); err != nil {
 		return nil, err
 	}
 	// buf length is 3 = 1 LED with 3 bpp, encoded as short big endian
-	//if err := s.write(NEOPIXEL_BASE, NEOPIXEL_BUF_LENGTH, []byte{3, 0}); err != nil {
-	//	return nil, err
-	//}
+	fmt.Printf("setting neopixel buffer size to %d\n", 3)
+	if err := s.write(NEOPIXEL_BASE, NEOPIXEL_BUF_LENGTH, []byte{0, 3}); err != nil {
+		return nil, err
+	}
 
 	return s, nil
 }
@@ -97,7 +120,7 @@ func (r *Rotary) Button() (bool, error) {
 	if err := r.read(GPIO_BASE, GPIO_BULK, buf, delay); err != nil {
 		return false, err
 	}
-	mask := uint32(1) << button_pin
+	mask := uint32(1) << r.c.ButtonPin
 	return (binary.BigEndian.Uint32(buf) & mask) == 0, nil
 }
 
