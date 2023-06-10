@@ -15,6 +15,35 @@ type Rotary struct {
 	c   Conf
 }
 
+type Color uint32
+
+func RGB(r, g, b uint8) Color {
+	return Color(g)<<16 | Color(r)<<8 | Color(b)
+}
+
+func RGBB(r, g, b uint8, brightness float32) Color {
+	return Color(float32(g)*brightness)<<16 | Color(float32(r)*brightness)<<8 | Color(float32(b)*brightness)
+}
+
+// Adjust brightness. Hue could drift after multiple operations.
+func (c Color) Scale(coef float32) Color {
+	scale := func(val Color) Color {
+		r := Color(float32(val&0xff) * coef)
+		if r > 255 {
+			r = 255
+		}
+		return r
+	}
+	return scale(c>>16)<<16 | scale(c>>8)<<8 | scale(c)
+}
+
+const (
+	Green Color = 0xff0000
+	Red   Color = 0x00ff00
+	Blue  Color = 0x0000ff
+	White Color = 0xffffff
+)
+
 const (
 	GPIO_BASE = 0x01
 
@@ -53,10 +82,11 @@ type Conf struct {
 	ButtonPin   int
 }
 
-func Default() Conf {
+func Default(bus int) Conf {
 	return Conf{
 		Conf: i2cdev.Conf{
 			Addr: defaultAddr,
+			Bus:  bus,
 		},
 		NeopixelPin: neopixelPin,
 		ButtonPin:   buttonPin,
@@ -124,8 +154,8 @@ func (r *Rotary) Button() (bool, error) {
 	return (binary.BigEndian.Uint32(buf) & mask) == 0, nil
 }
 
-func (r *Rotary) LED(red, green, blue uint) error {
-	buf := []byte{0, 0, byte(green), byte(red), byte(blue)}
+func (r *Rotary) LED(c Color) error {
+	buf := []byte{0, 0, byte((c >> 16) & 0xff), byte((c >> 8) & 0xff), byte(c & 0xff)}
 	if err := r.write(NEOPIXEL_BASE, NEOPIXEL_BUF, buf); err != nil {
 		return err
 	}

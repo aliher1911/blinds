@@ -12,8 +12,13 @@ import (
 	rpio "github.com/stianeikeland/go-rpio/v4"
 )
 
+var colorSeq = []input.Color{
+	input.Red, input.Green, input.Blue, input.White,
+}
+
 func main() {
 	logger.ChangePackageLogLevel("i2c", logger.InfoLevel)
+	const bus = 1
 
 	fmt.Println("blinds control")
 	err := rpio.Open()
@@ -26,21 +31,21 @@ func main() {
 	s := actuator.NewStepper([]int{26, 13, 6, 5})
 	defer s.PowerOff()
 
-	m, err := sensor.NewMagnetometer(sensor.Default())
+	m, err := sensor.NewMagnetometer(sensor.Default(bus))
 	if err != nil {
 		fmt.Printf("failed to init magnetometer: %s\n", err)
 		return
 	}
 	defer m.Close()
 
-	r, err := input.NewRotary(input.Default())
+	r, err := input.NewRotary(input.Default(bus))
 	if err != nil {
 		fmt.Printf("failed to init rotatore: %s\n", err)
 		return
 	}
 	defer r.Close()
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 100000; i++ {
 		if i%100 == 0 {
 			if x, y, z, err := m.Read(); err != nil {
 				fmt.Printf("failed to read magnetometer: %s\n", err)
@@ -55,6 +60,15 @@ func main() {
 			} else {
 				fmt.Printf("pos=%3d, butt=%t\n", p, b)
 			}
+
+			c := colorSeq[(i/1000)%len(colorSeq)]
+			switch {
+			case p < 0:
+				c = c.Scale(0.5)
+			case p == 0:
+				c = 0
+			}
+			r.LED(c)
 		}
 		s.Step(1)
 		<-time.After(75 * time.Microsecond)
