@@ -49,12 +49,23 @@ func main() {
 	switch flag.Arg(0) {
 	case "read":
 		cli.GetAngle(bus)
-	case "write":
+	case "set":
 		cli.SetAngle(bus, int32(baseAngle), int32(angle))
 	case "ui-test":
 		cli.CliTest(bus, sigs)
 	case "service":
 		cli.Service(bus, int32(baseAngle), sigs)
+	case "int-debug":
+		cli.IntDebug(bus, sigs)
+	case "":
+		fmt.Print(`supported commands:
+
+read      - read absolute angle of shaft
+set       - set shaft angle using angle and optional base-angle flags to rotate to new position
+ui-test   - run ui test to check controls, led and interrupts
+service   - run service which sets shaft angle in response to rotary controls
+int-debug - debug interrupt handling
+`)
 	default:
 		fmt.Printf("unknown command: %s\n", flag.Arg(0))
 	}

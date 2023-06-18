@@ -66,13 +66,15 @@ func SetAngle(bus uint, base, angle int32) {
 }
 
 func logInterrupts(ctx context.Context, intr <-chan interface{}) {
+	var count int
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-intr:
-			fmt.Println("interrupt fired")
 		}
+		fmt.Printf("interrupt fired %d\n", count)
+		count++
 	}
 }
 
@@ -122,6 +124,7 @@ func CliTest(bus uint, sigs <-chan os.Signal) {
 		return
 	}
 	defer r.Close()
+	defer r.LED(input.Color(0))
 
 	for i := 0; i < 50000; i++ {
 		if i%100 == 0 {
@@ -156,5 +159,40 @@ func CliTest(bus uint, sigs <-chan os.Signal) {
 			fmt.Printf("stopping on signal %s\n", s)
 			return
 		}
+	}
+}
+
+func IntDebug(bus uint, sigs <-chan os.Signal) {
+	intPin := i2cdev.NewIntPin(int_pin, rpio.FallEdge)
+
+	r, err := input.NewRotary(input.Default(bus))
+	if err != nil {
+		fmt.Printf("failed to init rotatore: %s\n", err)
+		return
+	}
+	defer r.Close()
+
+	reset := func() {
+		r.Button()
+		r.Position()
+	}
+	defer reset()
+
+	// Close int routines before stopping gpio.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	intC := make(chan interface{})
+	go intDetector(ctx, intC, intPin)
+	go logInterrupts(ctx, intC)
+	var count int
+	for {
+		select {
+		case <-sigs:
+			return
+		case <-time.After(10 * time.Second):
+		}
+		fmt.Printf("reset interrupt %d\n", count)
+		count++
+		reset()
 	}
 }
