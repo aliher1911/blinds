@@ -52,14 +52,20 @@ const (
 	GPIO_BULK        = 0x04
 	GPIO_BULK_SET    = 0x05
 	GPIO_BULK_CLR    = 0x06
-	GPIO_PULLENSET   = 0x0B
-	GPIO_PULLENCLR   = 0x0C
+	GPIO_BULK_TOGGLE = 0x07
+	GPIO_INTENSET    = 0x08
+	GPIO_INTENCLR    = 0x09
+	// Read to reset the all gpio int flags.
+	GPIO_INTFLAG   = 0x0A
+	GPIO_PULLENSET = 0x0B
+	GPIO_PULLENCLR = 0x0C
 
 	ENCODER_BASE = 0x11
 
 	ENCODER_STATUS   = 0x00
 	ENCODER_INTENSET = 0x10
 	ENCODER_INTENCLR = 0x20
+	// Read any to reset rotary int flag.
 	ENCODER_POSITION = 0x30
 	ENCODER_DELTA    = 0x40
 
@@ -82,11 +88,11 @@ type Conf struct {
 	ButtonPin   int
 }
 
-func Default(bus int) Conf {
+func Default(bus uint) Conf {
 	return Conf{
 		Conf: i2cdev.Conf{
 			Addr: defaultAddr,
-			Bus:  bus,
+			Bus:  int(bus),
 		},
 		NeopixelPin: neopixelPin,
 		ButtonPin:   buttonPin,
@@ -104,6 +110,11 @@ func NewRotary(c Conf) (*Rotary, error) {
 		c:   c,
 	}
 
+	// Setup rotary interrupt
+	if err := s.write(ENCODER_BASE, ENCODER_INTENSET, []byte{0x01}); err != nil {
+		return nil, err
+	}
+
 	// Setup button pin to INPUT_PULLUP
 	mask := uint32(1) << uint32(c.ButtonPin)
 	cmd := make([]byte, 4)
@@ -115,6 +126,10 @@ func NewRotary(c Conf) (*Rotary, error) {
 		return nil, err
 	}
 	if err := s.write(GPIO_BASE, GPIO_BULK_SET, cmd); err != nil {
+		return nil, err
+	}
+	// Enable button interrupt.
+	if err := s.write(GPIO_BASE, GPIO_INTENSET, cmd); err != nil {
 		return nil, err
 	}
 
@@ -145,13 +160,17 @@ func (r *Rotary) SetPosition(newPos int) error {
 	return nil
 }
 
-func (r *Rotary) Button() (bool, error) {
+func (r *Rotary) Button() (bool, bool, error) {
+	flags := make([]byte, 4)
+	if err := r.read(GPIO_BASE, GPIO_INTFLAG, flags, delay); err != nil {
+		return false, false, err
+	}
 	buf := make([]byte, 4)
 	if err := r.read(GPIO_BASE, GPIO_BULK, buf, delay); err != nil {
-		return false, err
+		return false, false, err
 	}
 	mask := uint32(1) << r.c.ButtonPin
-	return (binary.BigEndian.Uint32(buf) & mask) == 0, nil
+	return (binary.BigEndian.Uint32(buf) & mask) == 0, (binary.BigEndian.Uint32(flags) & mask) != 0, nil
 }
 
 func (r *Rotary) LED(c Color) error {
@@ -166,6 +185,11 @@ func (r *Rotary) LED(c Color) error {
 }
 
 func (r *Rotary) Close() {
+	r.write(ENCODER_BASE, ENCODER_INTENCLR, []byte{0x01})
+	mask := uint32(1) << uint32(r.c.ButtonPin)
+	cmd := make([]byte, 4)
+	binary.BigEndian.PutUint32(cmd, mask)
+	r.write(GPIO_BASE, GPIO_INTENCLR, cmd)
 	r.bus.Close()
 }
 

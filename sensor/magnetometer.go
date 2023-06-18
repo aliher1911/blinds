@@ -98,10 +98,10 @@ var writeRegs = i2cdev.Registers{
 
 const defaultAddr = 0x5e
 
-func Default(bus int) i2cdev.Conf {
+func Default(bus uint) i2cdev.Conf {
 	return i2cdev.Conf{
 		Addr: defaultAddr,
-		Bus:  bus,
+		Bus:  int(bus),
 	}
 }
 

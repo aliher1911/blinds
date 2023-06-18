@@ -8,6 +8,10 @@ import (
 
 const stepperPins = 4
 
+var DefaultPins = []int{
+	26, 13, 6, 5,
+}
+
 const coilSteps = 8
 
 var coilSeq = [8]int{
@@ -47,7 +51,13 @@ func NewStepper(pinNums []int) Stepper {
 // delta should be +1/-1 only, otherwise it will just skip.
 // +1 - clockwise if looking from sensor side
 func (s *Stepper) Step(delta int) {
-	s.pos = (s.pos + delta) % coilSteps
+	s.pos = s.pos + delta
+	switch {
+	case s.pos < 0:
+		s.pos = coilSteps - 1
+	case s.pos == coilSteps:
+		s.pos = 0
+	}
 	s.setPins()
 }
 

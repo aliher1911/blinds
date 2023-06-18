@@ -11,3 +11,8 @@
 
 Included ;-)
 
+### Calibration
+cli commands to:
+- read angle
+- set angle
+- once done, set desired values in config file
