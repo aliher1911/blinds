@@ -37,11 +37,32 @@ func (c Color) Scale(coef float32) Color {
 	return scale(c>>16)<<16 | scale(c>>8)<<8 | scale(c)
 }
 
+func addComp(a, b Color, offset int) Color {
+	r := ((a >> offset) & 0xff) + ((b >> offset) & 0xff)
+	if r > 255 {
+		return 255 << offset
+	}
+	return r << offset
+}
+
+// Arithmetically add components, clipping at max.
+func (c Color) Add(val Color) Color {
+	return addComp(c, val, 16) + addComp(c, val, 8) + addComp(c, val, 0)
+}
+
+func (c Color) String() string {
+	return fmt.Sprintf("Color{R:%x G:%x B:%x}", int((c>>8)&0xff), int((c>>16)&0xff), int(c&0xff))
+}
+
 const (
-	Green Color = 0xff0000
-	Red   Color = 0x00ff00
-	Blue  Color = 0x0000ff
-	White Color = 0xffffff
+	Off     Color = 0x000000
+	Green   Color = 0xff0000
+	Yellow  Color = 0xffff00
+	Red     Color = 0x00ff00
+	Magenta Color = 0x00ffff
+	Blue    Color = 0x0000ff
+	Cyan    Color = 0xff00ff
+	White   Color = 0xffffff
 )
 
 const (
@@ -147,10 +168,19 @@ func NewRotary(c Conf) (*Rotary, error) {
 	return s, nil
 }
 
-// Use delta instead.
+// Read absolute encoder position.
 func (r *Rotary) Position() (int, error) {
 	buf := make([]byte, 4)
 	if err := r.read(ENCODER_BASE, ENCODER_POSITION, buf, delay); err != nil {
+		return 0, err
+	}
+	return int(binary.BigEndian.Uint32(buf)), nil
+}
+
+// Read delta since last read and reset it.
+func (r *Rotary) Delta() (int, error) {
+	buf := make([]byte, 4)
+	if err := r.read(ENCODER_BASE, ENCODER_DELTA, buf, delay); err != nil {
 		return 0, err
 	}
 	return int(binary.BigEndian.Uint32(buf)), nil
@@ -160,7 +190,9 @@ func (r *Rotary) SetPosition(newPos int) error {
 	return nil
 }
 
-func (r *Rotary) Button() (bool, bool, error) {
+// Retrieve button state and reset interrupt flag.
+// error != nil means gpio reading failed.
+func (r *Rotary) Button() (button, interrupt bool, err error) {
 	flags := make([]byte, 4)
 	if err := r.read(GPIO_BASE, GPIO_INTFLAG, flags, delay); err != nil {
 		return false, false, err
@@ -173,6 +205,7 @@ func (r *Rotary) Button() (bool, bool, error) {
 	return (binary.BigEndian.Uint32(buf) & mask) == 0, (binary.BigEndian.Uint32(flags) & mask) != 0, nil
 }
 
+// Set LED color.
 func (r *Rotary) LED(c Color) error {
 	buf := []byte{0, 0, byte((c >> 16) & 0xff), byte((c >> 8) & 0xff), byte(c & 0xff)}
 	if err := r.write(NEOPIXEL_BASE, NEOPIXEL_BUF, buf); err != nil {
@@ -184,6 +217,7 @@ func (r *Rotary) LED(c Color) error {
 	return nil
 }
 
+// Close disables hw interrupts and closes bus.
 func (r *Rotary) Close() {
 	r.write(ENCODER_BASE, ENCODER_INTENCLR, []byte{0x01})
 	mask := uint32(1) << uint32(r.c.ButtonPin)

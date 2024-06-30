@@ -7,6 +7,10 @@
 - Adafruit rotary encoder breakout (using seesaw) i2c
 - Adafruit magnetometer i2C
 
+### Power
+- PSU jack: center positive (vcc)
+- Micro USB: from flat side facing down, vcc on right, ground on left
+
 ## Software
 
 Included ;-)

@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"math"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,12 +19,18 @@ import (
 const NoAngle = -999999
 
 type Config struct {
-	Delay             time.Duration
-	IdleDelay         time.Duration
+	// Delay between advances to current goal.
+	Delay time.Duration
+	// Delay between advances to current goal if at target or detected a stall.
+	IdleDelay time.Duration
+	// How frequently we read position sensor.
 	PosUpdateInterval time.Duration
-	StopMotionAfter   time.Duration
-	StepsPerDegree    int64
-	PositionAccuracy  int32
+	// Stop movement if we can't get a valid reading for the period.
+	StopMotionAfter time.Duration
+	// Stepper + gearbox reduction param.
+	StepsPerDegree int64
+	// Threshold within target that we consider to be spot on.
+	PositionAccuracy int32
 
 	MinAngle int32
 	MaxAngle int32
@@ -41,21 +49,24 @@ func Defaults() Config {
 		StopMotionAfter:   5 * time.Second,
 		StepsPerDegree:    180,
 		PositionAccuracy:  5,
-		MinAngle:          -75,
-		MaxAngle:          75,
+		MinAngle:          -140,
+		MaxAngle:          140,
 		MinRate:           0.0001,
 		MaxRate:           0.01,
 		IntPin:            -1,
 	}
 }
 
+// Controller is responsible for rotating shaft and setting it to the requested angle.
+// It runs tight loop so it is also responsible for checking external edge detector
+// to handle UI interrupts.
 type Controller struct {
 	Config
 	s *actuator.Stepper
 	p *sensor.Position
 
 	intPin i2cdev.IntPin
-	intC   chan interface{}
+	intC   chan time.Time
 
 	lastAngle   int32
 	targetAngle int32
@@ -73,38 +84,21 @@ func NewController(s *actuator.Stepper, p *sensor.Position, cfg Config) *Control
 		lastAngle:   NoAngle,
 		targetAngle: NoAngle,
 		targetC:     make(chan int32, 1),
-		startedC:    make(chan interface{}),
-		stoppedC:    make(chan interface{}),
 	}
 	if cfg.IntPin >= 0 {
-		// Maybe make this external?
-		c.intC = make(chan interface{})
+		// We do this because this is the only tight loop in the app.
+		c.intC = make(chan time.Time)
 		c.intPin = i2cdev.NewIntPin(cfg.IntPin, rpio.FallEdge)
 	}
 	return c
 }
 
-func (c *Controller) Start() {
-	select {
-	case <-c.startedC:
-	default:
-		go c.run()
-		close(c.startedC)
-	}
-}
-
-func (c *Controller) Stop() {
-	select {
-	case <-c.stoppedC:
-	default:
-		close(c.stoppedC)
-	}
-}
-
+// Pos reads current position
 func (c *Controller) Pos() int32 {
 	return atomic.LoadInt32(&c.lastAngle)
 }
 
+// SetTarget sets desired shaft angle
 func (c *Controller) SetTarget(angle int32) {
 	if angle < c.MinAngle {
 		angle = c.MinAngle
@@ -119,15 +113,17 @@ func (c *Controller) SetTarget(angle int32) {
 	c.targetC <- angle
 }
 
+// AtTarget is true if shaft is positioned at target
 func (c *Controller) AtTarget() bool {
 	return abs(c.targetAngle-c.Pos())*2 < c.PositionAccuracy
 }
 
+// Target restuns set shaft angle.
 func (c *Controller) Target() int32 {
 	return c.targetAngle
 }
 
-func (c *Controller) InterruptC() <-chan interface{} {
+func (c *Controller) InterruptC() <-chan time.Time {
 	return c.intC
 }
 
@@ -137,7 +133,10 @@ type posUpdate struct {
 	angle     int32 // TODO: maybe change to float
 }
 
-func (c *Controller) run() {
+func (c *Controller) Run(ctx context.Context) error {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
 	// Position in the middle to avoid all the maths nesessary.
 	// We would never run out of steps :-)
 	// Note: This is atomic to synchronize with magnetometer poll.
@@ -156,7 +155,16 @@ func (c *Controller) run() {
 		pos:   0,
 		angle: NoAngle,
 	}
+	// Must always be run inside wait group.
 	var updatePending = false
+	defer func() {
+		if updatePending {
+			// Wait for pos reader to terminate so that its chan is unblocked.
+			<-readPosC
+		}
+		c.s.PowerOff()
+	}()
+
 	updateFn := func() {
 		now := time.Now()
 		savedPos := atomic.LoadInt64(&pos)
@@ -172,21 +180,17 @@ func (c *Controller) run() {
 				angle:     int32(a),
 			}
 		}
+		wg.Done()
 	}
 
 	var reachedTarget bool
 	var safetyStop bool
 
 	for {
+		// Check if we received any commands/updates or temination request.
 		select {
-		case <-c.stoppedC:
-			// Terminate as needed.
-			if updatePending {
-				// Wait for pos reader to terminate.
-				<-readPosC
-			}
-			c.s.PowerOff()
-			return
+		case <-ctx.Done():
+			return ctx.Err()
 		case targetAngle = <-c.targetC:
 			// Handle target update.
 			reachedTarget = false
@@ -202,10 +206,10 @@ func (c *Controller) run() {
 					targetPos = c.targetSteps(newShaftPos, targetAngle, c.StepsPerDegree)
 					reachedTarget = false
 				}
-				fmt.Printf("update: pos=%d, targetPos=%d, readPos=%d(dp=%d), "+
-					"angle=%d, targetAngle=%d\n",
-					pos, targetPos, newShaftPos.pos, pos-newShaftPos.pos, newShaftPos.angle,
-					targetAngle)
+				//fmt.Printf("ctrl: update: pos=%d, targetPos=%d, readPos=%d(dp=%d), "+
+				//	"angle=%d, targetAngle=%d\n",
+				//	pos, targetPos, newShaftPos.pos, pos-newShaftPos.pos, newShaftPos.angle,
+				//	targetAngle)
 				// Save current values.
 				shaftPos = newShaftPos
 				safetyStop = false
@@ -220,15 +224,17 @@ func (c *Controller) run() {
 			sinceUpdate := now.Sub(shaftPos.timeStamp)
 			if !updatePending && sinceUpdate > c.PosUpdateInterval {
 				updatePending = true
+				wg.Add(1)
 				go updateFn()
 			}
 			if sinceUpdate > c.StopMotionAfter {
 				// Prevent any movements to avoid crashing into stops.
-				fmt.Printf("No updates for %s, stopping motion\n", sinceUpdate)
+				fmt.Printf("ctrl: No updates for %s, stopping motion\n", sinceUpdate)
 				safetyStop = true
 			}
 		}
 
+		// Update stepper and calculate next step delay.
 		var next <-chan time.Time
 		pd := targetPos - pos
 		switch {
@@ -248,6 +254,7 @@ func (c *Controller) run() {
 			if !reachedTarget {
 				if !updatePending {
 					updatePending = true
+					wg.Add(1)
 					go updateFn()
 				}
 				next = time.After(c.Delay)
@@ -255,18 +262,28 @@ func (c *Controller) run() {
 				next = time.After(c.IdleDelay)
 			}
 			reachedTarget = true
-		}
-
-		// Handle interrupt polling.
-		if c.intPin.EdgeDetected() {
-			select {
-			case c.intC <- struct{}{}:
-			default:
-			}
+			c.s.PowerOff()
 		}
 
 		// Wait for next loop time.
-		<-next
+	stepper_delay:
+		for {
+			// Handle interrupt polling as it is the only busy loop in app.
+			// Maybe we should make it a callback to decouple?
+			if c.intPin.EdgeDetected() {
+				select {
+				case c.intC <- time.Now():
+				default:
+				}
+			}
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			case <-next:
+				break stepper_delay
+			}
+		}
 	}
 }
 

@@ -14,6 +14,12 @@ type Field struct {
 
 type Registers []Field
 
+// BulkDevice allows reading packed registers of arbitrary sizes from
+// I2C bus.
+// Read ops first read packed byte array from the bus, then
+// use configured mapping to extract packed values.
+// Write ops first need to pack data into buffer then write it as a bus
+// op.
 type BulkDevice struct {
 	bus       *i2c.I2C
 	readRegs  Registers

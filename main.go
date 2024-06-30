@@ -57,6 +57,12 @@ func main() {
 		cli.Service(bus, int32(baseAngle), sigs)
 	case "int-debug":
 		cli.IntDebug(bus, sigs)
+	case "LED":
+		cli.LEDDemo(bus, sigs)
+	case "ui-demo":
+		cli.UIDemo(bus, sigs)
+	case "help":
+		fallthrough
 	case "":
 		fmt.Print(`supported commands:
 
@@ -65,6 +71,8 @@ set       - set shaft angle using angle and optional base-angle flags to rotate 
 ui-test   - run ui test to check controls, led and interrupts
 service   - run service which sets shaft angle in response to rotary controls
 int-debug - debug interrupt handling
+LED       - run test LED output
+ui-demo   - run ui controller test
 `)
 	default:
 		fmt.Printf("unknown command: %s\n", flag.Arg(0))

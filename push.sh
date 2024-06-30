@@ -20,7 +20,7 @@ if [ -z "${target:-}" ] ; then
   exit 1  
 fi
 
-GOOS=linux GOARCH=arm go build -o blinds main.go
+GOARM=5 GOOS=linux GOARCH=arm go build -o blinds main.go
 
 # Don't forget to set up public key logins
 

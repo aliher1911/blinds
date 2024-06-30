@@ -3,16 +3,24 @@ package cli
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
-	"time"
+	"sync"
 
 	"github.com/aliher1911/blinds/actuator"
 	"github.com/aliher1911/blinds/controller"
 	"github.com/aliher1911/blinds/input"
 	"github.com/aliher1911/blinds/sensor"
+	"github.com/aliher1911/blinds/ui"
 )
 
 func Service(bus uint, baseAngle int32, sigs <-chan os.Signal) {
+	var wg sync.WaitGroup
+	defer wg.Wait()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	s := actuator.NewStepper(actuator.DefaultPins)
 	defer s.PowerOff()
 
@@ -34,38 +42,63 @@ func Service(bus uint, baseAngle int32, sigs <-chan os.Signal) {
 	ccfg.IntPin = int_pin
 	p := sensor.NewPositionSensor(m, float32(baseAngle))
 	ctrl := controller.NewController(&s, &p, ccfg)
-	ctrl.Start()
-	ctrl.SetTarget(0)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go logInterrupts(ctx, ctrl.InterruptC())
-
-	func() {
-		steps := []int32{0, 30, -30, 10, -50}
-		i := 0
-		delay := time.Second
-		for {
-			select {
-			case <-sigs:
-				fmt.Println("received interrupt, winding down")
-				return
-			case <-time.After(delay):
-				p := ctrl.Pos()
-				fmt.Printf("position: %d\n", p)
-				if ctrl.AtTarget() {
-					i++
-					if i == len(steps) {
-						return
-					}
-					fmt.Printf("setting new target: %d\n", steps[i])
-					ctrl.SetTarget(steps[i])
-				}
-				delay = 10 * time.Second
-			}
-		}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ctrl.Run(ctx)
 	}()
 
-	ctrl.Stop()
-	r.LED(input.Color(0))
+	l, lC := input.NewLED(r)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		l.Run(ctx)
+	}()
+
+	a := &DocAdapter{ctrl: ctrl}
+	ui := ui.New(r, ctrl.InterruptC(), lC, a)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ui.Run(ctx)
+	}()
+
+	<-sigs
+	fmt.Println("service: Received interrupt signal. Aborting.")
+
+	r.LED(input.Off)
+}
+
+type DocAdapter struct {
+	ctrl        *controller.Controller
+	initialized bool
+}
+
+func (a *DocAdapter) SetAngle(angle int32) {
+	if a.initialized {
+		a.ctrl.SetTarget(angle)
+	}
+}
+
+func (a *DocAdapter) SetAuto(auto bool) {
+}
+
+func (a *DocAdapter) GetState() ui.State {
+	ct := a.ctrl.Target()
+	pos := a.ctrl.Pos()
+	if !a.initialized {
+		if pos == controller.NoAngle {
+			ct = 0
+			pos = 0
+		} else {
+			a.initialized = true
+			// Round current angle to closest 10 degree step.
+			ct = int32(math.Round(float64(pos)/10)) * 10
+		}
+	}
+	return ui.State{
+		SetAngle:     ct,
+		CurrentAngle: pos,
+		Auto:         false,
+	}
 }

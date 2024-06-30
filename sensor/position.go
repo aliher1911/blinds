@@ -7,6 +7,8 @@ type Position struct {
 	baseAngle float32
 }
 
+// Angle is typically the missle of the range.
+// For our case is the horizontal position.
 func NewPositionSensor(m *Magnetometer, angle float32) Position {
 	return Position{
 		m:         m,
